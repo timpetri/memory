@@ -1,203 +1,111 @@
-// Copyright stuff
-// Event page
-// Monitors for events through Google Chrome Events API and saves all information to 
-// chrome.storage.local.
 
-console.clear()
-console.log("Cleared and loaded!")
+console.log("Loaded!");
 
-
-function currentTime() {
+const currentTime = () => {
 	return new Date().toTimeString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, "$1");
 }
 
-chrome.runtime.onMessage.addListener(handleMessage)
-chrome.tabs.onCreated.addListener(handleTabCreation)
-chrome.tabs.onUpdated.addListener(handleTabUpdate)
-chrome.tabs.onRemoved.addListener(handleTabRemoval)
+/**
+ * Basic wrapper for tab information.
+ */
+class Tab {
+	constructor(chromeTabObject) {
+		this.obj_ = chromeTabObject;
+		this.active_ = chromeTabObject.active;
+		this.favIconUrl = chromeTabObject.favIconUrl;
+		this.id_ = chromeTabObject.id;
+		this.openerTabId_ = chromeTabObject.openerTabId || -1;
+		this.status_ = chromeTabObject.status;
+		this.url_ = chromeTabObject.url;
+		this.windowId_ = chromeTabObject.windowId;
+	}
 
-chrome.tabs.onActivated.addListener(handleTabActivation)
+	toString() {
+		return `id: ${this.id_}, url: window: ${this.windowId_}, opened: ${this.openerTabId_}, ${this.url_}`;
+	}
+}
 
-function handleMessage(data, sender, sendResponse) {
-
+/**
+ * Accepts a message from `content.js` which is injected on every page. Used to
+ * save information on every page load.
+ */
+const handleMessage = (data , sender, sendResponse) => {
 	if (data.msg === "pageLoaded") {
-		console.log("Loaded " + data.url )
+		// console.log("[loaded]", data.url);
 	}
 }
 
-// WHenever a tab is created
-// Two cases: new tab that's active (click new tab button, chrome://new-tab)
-// and new tab that's not active (click open new link in tab (or use omnibox rarely))
-function handleTabCreation(tab) {
-	var ms = new Date().now()
-	console.log("[%s][%d] Tab creation noted.", ms, tab.id)
-
-	// get information on from which tab when this tab was created
-	var oldTabId = window.activeTabs[tab.windowId]
-
-	// new tab that's active (click new tab button, chrome://new-tab)
-	if (tab.active) {
-		// brand new tab
-		window.events[ms] = {
-			"event": "new_tab",
-			"time": ms, 
-			"from": oldTabId,
-			"to": tab.id}
-
-		// new active tab
-		window.activeTabs[tab.windowId] = tab.id
-
-	} else {
-		// link opened in new tab in background
-		window.events[ms] = {
-			"event": "new_tab_link",
-			"time": ms, 
-			"from": oldTabId,
-			"to": tab.id}
-	}
-
-	// to be complemented by following tab updates
-	window.tabInfo[tab.id] = {
-		"id": tab.id,
-		"time": ms,
-		"url": "TO_BE_SET"}
-
-}
-
-// WHenever a tab updates
-function handleTabUpdate(tabId, changeInfo, tab) {
+/**
+ * Handles tab creation.
+ */
+const handleTabCreation = (tab) => {
 	var ms = currentTime()
-	console.log("[%s][%d] Tab update noted.", ms, tabId)
-	
-	if ("url" in changeInfo) {
-
-		if (window.tabInfo[tabId].url === "TO_BE_SET") {
-			// continuation of new tab
-			window.tabInfo[tabId].url = changeInfo.url
-
-		} else if (window.tabInfo[tabId] === changeInfo.url) {
-			// TODO: reloaded page
-		} else {
-			// link was clicked inside tab
-			window.events[ms] = {
-				"event": "open_link_in_tab",
-				"time": ms, 
-				"from": tabId,
-				"to": tabId }
-			// throw old link information into archive
-			window.tabInfoArchive.push(window.tabInfo[tabId]) // TODO: make sure this happens first
-				// to be complemented by tabupdates
-			window.tabInfo[tabId] = {
-				"id": newTabId,
-				"time": ms, // this got updated
-				"url": changeInfo.url } // this as well
-			}
-	} else {
-		// ignore updates related to favicon and 
-		// title for now (they don't come in order)
-	}
+	console.log(`[creation] ${ms} ${tabId}`);
 }
 
-// WHenever a tab is removed
-// removeInfo : {windowsId, isWindowClosing}
-function handleTabRemoval(tabId, removeInfo) {
+/**
+ * Handles tab update.
+ */
+const handleTabUpdate = (tabId , changeInfo, tab) => {
+	const ms1 = currentTime();
+	chrome.tabs.query({}, (tabs) => {
+		const ms2 = currentTime();
+		console.log(`[removal] [${ms1},${ms2}]`);
+		tabs.forEach((tabData) => {
+			const tab = new Tab(tabData);
+			console.log(tab.toString());
+		});
+	});
+}
+
+/**
+ * Handles a tab being removed.
+ * removeInfo : {windowsId, isWindowClosing}
+ */
+const handleTabRemoval = (tabId , removeInfo) => {
 	var ms = currentTime()
-	console.log("[%s][%d] Tab removal noted.", ms, tabId)
-
-	// add event for removal
-	// push old info into archive
-	// update active state
-	window.events[ms] = {
-			"event": "close_tab",
-			"time": ms, 
-			"from": tabId,
-			"to": -1}
-
-	window.tabInfoArchive.push(window.tabInfo[tabId])
-	delete window.tabInfo[tabId]
-
-	if (removeInfo.isWindowClosing) {
-		delete window.activeTabs[removeInfo.windowId]
-	} else {
-		chrome.tabs.query({active: true, windowId: removeInfo.windowId},
-			function(resultTabs) {
-				window.activeTabs[removeInfo.windowId] = resultTabs[0].id
-			});
-	}
+	console.log(`[removal] ${ms} || ${tabId}`);
 }
 
-// Active tab changes (url may not be set, listen on updated..)
-// activeInfo: {tabId, windowId} 
-function handleTabActivation(activeInfo) {
+/**
+ * Handles a tab being activated.
+ * @param activeInfo: {tabId, windowId}
+ */
+const handleTabActivation = (activeInfo) => {
 	var ms = currentTime()
-	console.log("[%s][%d] Tab activation noted.", ms, activeInfo.tabId)
-	console.log(activeInfo)
-
-	window.activeTabs[activeInfo.windowId] = activeInfo.tabId
+	console.log(`[activation] ${ms} ${activeInfo.tabId}`);
 }
 
-function handleTabDetachment(tabId, detachInfo) {
-	var ms = currentTime()
-	console.log("[%s][%d] Tab detachment noted.", ms, tabId)
-
-	chrome.tabs.query({active: true, windowId: detachInfo.oldWindowId},
-		function(resultTabs) {
-			if (resultTabs.length === 1) 
-				delete window.activeTabs[detachInfo.oldWindowId]
-			else 
-				window.activeTabs[detachInfo.oldWindowId] = resultTabs[0].id
-		}
-	);
+/**
+ * Handles event for a tab being detached.
+ */
+const handleTabDetachment = (tabId , detachInfo) => {
+	var ms = currentTime();
+	console.log(`[detachment] ${ms} || ${tabId}`);
 }
 
-function handleTabAttachment(tabId, attachInfo) {
-	var ms = currentTime()
-	console.log("[%s][%d] Tab attachment noted.", ms, tabId)
+/**
+ * Handles a tab being attached to a window.
+ */
+const handleTabAttachment = (tabId , attachInfo) => {
+	var ms = currentTime();
+	console.log(`[attachment] ${ms} || ${tabId}`);
+};
 
-	window.activeTabs[detachInfo.newWindowId] = tabId
-
-}
-
-function loadStateFromSession() {
-	console.log("loading in state")
-	chrome.tabs.query({active: true},
-		function(resultTabs) {
-			console.log(resultTabs)
-			for (tab in resultTabs) {
-				window.activeTabs[tab.windowId] = tab.id
-				console.log(tab.windowId)
-			}
-		}
-	);
-}
-
-
-	// chrome.tabs.query({}, function(result) {
-	// 	for (tab in result) {
-	// 		var tabId = tab.id
-	// 		var windowId = tab.windowId
-	// 		if !(windowId in window.state) {
-	// 			window.state[windowId] = new Set()
-	// 		}
-	// 		window.state[windowId].add(tabId)
-	// 		if (tab.active) {
-	// 			window.activeTabs[windowId] = tabId
-	// 		}
-	// 	} 
-	// })
 window.activeTabs = {}
 window.tabInfo = {}
 window.activeTabs = {}
 window.tabInfoArchive = []
 
 
-
 // When loading up, add listeners
 window.onload = function() {
-	loadStateFromSession();
+	// loadStateFromSession();
 };
 
-
-loadStateFromSession();
-
+chrome.runtime.onMessage.addListener(handleMessage);
+chrome.tabs.onActivated.addListener(handleTabActivation);
+chrome.tabs.onCreated.addListener(handleTabCreation);
+chrome.tabs.onRemoved.addListener(handleTabRemoval);
+chrome.tabs.onUpdated.addListener(handleTabUpdate);
 
